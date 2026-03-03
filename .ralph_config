@@ -1,0 +1,42 @@
+# Ralph Configuration & Guidelines
+
+## Project Context
+This file provides context and guidelines for the Ralph autonomous development loop.
+
+## File Organization
+- `specs/` - Feature specifications and requirements
+- `src/` - Source code implementation
+- `tests/` - Test files
+- `examples/` - Usage examples
+- `docs/` - Documentation
+- `logs/` - Ralph execution logs
+
+## Control Files (@ prefix)
+- `@fix_plan.md` - Prioritized task list (update as you complete tasks)
+- `@AGENT.md` - Build, test, and run commands
+- `PROMPT.md` - Main development instructions
+
+## Development Principles
+1. **Test-Driven**: Write tests before or alongside implementation
+2. **Incremental**: Make small, verifiable changes
+3. **Commit Often**: Commit after each logical unit of work
+4. **Document as You Go**: Keep docs synchronized with code
+5. **Follow the Plan**: Stick to @fix_plan.md priorities
+
+## Backpressure Mechanisms
+- Tests must pass before moving to next task
+- Code must meet quality standards
+- Documentation must be complete
+
+## When to Stop Iterating
+- All items in @fix_plan.md are marked complete
+- All tests pass
+- All specs are implemented
+- Success criteria in PROMPT.md are met
+
+## Guardrails
+- Never skip tests
+- Never commit broken code
+- Never mark incomplete tasks as done
+- Always update @fix_plan.md
+
