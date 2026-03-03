@@ -228,6 +228,14 @@ header h1 {
   word-break: break-word;
 }
 
+/* Placeholder text before transcription starts */
+.transcript-box:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  font-style: italic;
+  pointer-events: none;
+}
+
 /* ===== Spinner ===== */
 .spinner-row {
   display: flex;

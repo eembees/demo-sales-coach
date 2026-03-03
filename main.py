@@ -3,11 +3,13 @@ import os
 import asyncio
 
 import anthropic
+import httpx
 import websockets
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import InvalidStatus
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -35,6 +37,10 @@ class TranscriptRequest(BaseModel):
 
 class MeetingOutputRequest(BaseModel):
     meeting_output: str
+
+class SpeakRequest(BaseModel):
+    text: str
+    voice: str = "sarah"
 
 # --- Health ---
 
@@ -192,6 +198,39 @@ async def analyze(req: TranscriptRequest):
         return {"markdown": markdown}
     except anthropic.APIError as exc:
         raise HTTPException(status_code=502, detail="Analysis failed — please try again.")
+
+
+# --- POST /api/speak ---
+
+SPEECHMATICS_TTS_URL = "https://preview.tts.speechmatics.com/generate"
+
+@app.post("/api/speak")
+async def speak(req: SpeakRequest):
+    if not req.text.strip():
+        raise HTTPException(status_code=422, detail="Text cannot be empty")
+
+    if not SPEECHMATICS_API_KEY:
+        raise HTTPException(status_code=503, detail="TTS service unavailable")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{SPEECHMATICS_TTS_URL}/{req.voice}",
+                headers={
+                    "Authorization": f"Bearer {SPEECHMATICS_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={"text": req.text},
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="TTS service error")
+
+        return Response(content=resp.content, media_type="audio/wav")
+
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="TTS service timed out")
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="TTS service unreachable")
 
 
 # --- POST /api/coach ---

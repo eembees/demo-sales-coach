@@ -102,9 +102,8 @@ let transcript = "";
 let meetingMarkdown = "";
 let questions = [];
 let currentQuestionIndex = 0;
-let utterance = null;
+let currentAudio = null;
 let autoAdvanceTimer = null;
-const ttsSupported = "speechSynthesis" in window;
 
 // ── DOM refs ─────────────────────────────────────────────────
 const btnRecord      = document.getElementById("btn-record");
@@ -337,35 +336,52 @@ function showQuestion(index) {
   speakQuestion(q);
 }
 
-function speakQuestion(text) {
+async function speakQuestion(text) {
   cancelTTS();
 
-  if (!ttsSupported) return;
+  try {
+    const res = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
 
-  utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  utterance.pitch = 1.0;
+    if (!res.ok) {
+      // TTS unavailable — text is already shown, auto-advance after a pause
+      autoAdvanceTimer = setTimeout(() => {
+        currentQuestionIndex++;
+        showQuestion(currentQuestionIndex);
+      }, 4000);
+      return;
+    }
 
-  utterance.onend = () => {
-    // Auto-advance after 2s pause
-    autoAdvanceTimer = setTimeout(() => {
-      currentQuestionIndex++;
-      showQuestion(currentQuestionIndex);
-    }, 2000);
-  };
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
 
-  utterance.onerror = () => {
-    // Silently degrade — text already shown
-  };
+    currentAudio.onended = () => {
+      URL.revokeObjectURL(url);
+      autoAdvanceTimer = setTimeout(() => {
+        currentQuestionIndex++;
+        showQuestion(currentQuestionIndex);
+      }, 2000);
+    };
 
-  window.speechSynthesis.speak(utterance);
+    currentAudio.onerror = () => {
+      URL.revokeObjectURL(url);
+    };
+
+    currentAudio.play();
+  } catch (e) {
+    // Network error — silently degrade
+  }
 }
 
 function cancelTTS() {
-  if (ttsSupported) {
-    window.speechSynthesis.cancel();
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
   }
-  utterance = null;
 }
 
 function clearAutoAdvance() {
