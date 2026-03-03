@@ -1,0 +1,19 @@
+# fly.toml — Sales Coach Demo
+# Change 'app' to your chosen name before running 'fly deploy'
+
+app = 'sales-coach-demo'
+primary_region = 'arn'
+
+[build]
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
