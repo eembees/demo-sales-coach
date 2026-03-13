@@ -3,9 +3,10 @@ import json
 import os
 
 import anthropic
+import httpx
 import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -25,7 +26,9 @@ Source: <Product Name>
 If the requested product is not in the database, say so clearly.\
 """
 
-SPEECHMATICS_URL = "wss://eu2.rt.speechmatics.com/v2"
+SPEECHMATICS_RT_URL = "wss://eu2.rt.speechmatics.com/v2"
+SPEECHMATICS_TTS_URL = "https://eu2.tts.speechmatics.com/v1/generate"
+SPEECHMATICS_TTS_VOICE = "aria"
 
 GET_PRODUCT_TOOL = {
     "name": "get_product_info",
@@ -64,6 +67,11 @@ class ChatRequest(BaseModel):
     anthropic_key: str
 
 
+class TTSRequest(BaseModel):
+    text: str
+    speechmatics_key: str
+
+
 # ---------- WebSocket transcription proxy ----------
 
 @app.websocket("/ws/transcribe")
@@ -72,7 +80,7 @@ async def transcribe_ws(websocket: WebSocket, speechmatics_key: str):
 
     try:
         async with websockets.connect(
-            SPEECHMATICS_URL,
+            SPEECHMATICS_RT_URL,
             additional_headers={"Authorization": f"Bearer {speechmatics_key}"},
         ) as sm_ws:
             await sm_ws.send(
@@ -209,6 +217,32 @@ async def chat(request: ChatRequest):
             break
 
     return {"answer": "I couldn't find a good answer. Please try again.", "source": None}
+
+
+# ---------- Text-to-speech proxy ----------
+
+@app.post("/api/tts")
+async def tts(request: TTSRequest):
+    async def stream_audio():
+        async with httpx.AsyncClient(timeout=30) as client:
+            async with client.stream(
+                "POST",
+                SPEECHMATICS_TTS_URL,
+                headers={
+                    "Authorization": f"Bearer {request.speechmatics_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "input": request.text,
+                    "voice": {"name": SPEECHMATICS_TTS_VOICE},
+                    "audio_format": {"type": "wav"},
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes(chunk_size=4096):
+                    yield chunk
+
+    return StreamingResponse(stream_audio(), media_type="audio/wav")
 
 
 # ---------- Static files ----------

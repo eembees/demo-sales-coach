@@ -260,7 +260,8 @@ function finishAndSend() {
 
 async function sendChat(userText) {
   const anthropicKey = getKey('anthropic_key', 'Anthropic API Key');
-  if (!anthropicKey) return;
+  const speechmaticsKey = getKey('speechmatics_key', 'Speechmatics API Key');
+  if (!anthropicKey || !speechmaticsKey) return;
 
   appendUserMessage(userText);
   const loadingId = appendLoading();
@@ -281,10 +282,47 @@ async function sendChat(userText) {
     const data = await res.json();
     removeLoading(loadingId);
     appendBotMessage(data.answer, data.source);
+
+    // Speak the answer aloud via Speechmatics TTS
+    const cleanText = data.answer.replace(/^Source:.*$/im, '').trim();
+    if (cleanText) speakText(cleanText, speechmaticsKey);
   } catch (err) {
     removeLoading(loadingId);
     appendBotMessage('Sorry, something went wrong. Please try again.', null);
     console.error(err);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  TEXT-TO-SPEECH
+// ─────────────────────────────────────────────
+
+let currentAudio = null;
+
+async function speakText(text, speechmaticsKey) {
+  // Stop any currently playing speech
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, speechmatics_key: speechmaticsKey }),
+    });
+    if (!res.ok) {
+      console.warn('TTS request failed:', res.status);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
+    currentAudio.onended = () => URL.revokeObjectURL(url);
+    currentAudio.play();
+  } catch (err) {
+    console.warn('TTS error:', err);
   }
 }
 
