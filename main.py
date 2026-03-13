@@ -1,273 +1,215 @@
+import asyncio
 import json
 import os
-import asyncio
 
 import anthropic
-import httpx
 import websockets
-from websockets.asyncio.client import connect as ws_connect
-from websockets.exceptions import InvalidStatus
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-load_dotenv()
+app = FastAPI(title="Product Scout")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-SPEECHMATICS_API_KEY = os.getenv("SPEECHMATICS_API_KEY", "")
-SPEECHMATICS_LANGUAGE = os.getenv("SPEECHMATICS_LANGUAGE", "en")
-SPEECHMATICS_RT_URL = "wss://eu2.rt.speechmatics.com/v2"
+SYSTEM_PROMPT = """\
+You are a helpful product assistant for an online store. \
+Customers will ask you questions about products using voice.
 
-app = FastAPI(title="Sales Coach Demo")
+When a customer asks about a product, ALWAYS use the get_product_info tool \
+to look up accurate details before answering — never guess prices or specs.
 
-# --- REST Models ---
+Keep answers concise (2-4 sentences). End every answer that references a \
+product with a line in this exact format:
+Source: <Product Name>
+
+If the requested product is not in the database, say so clearly.\
+"""
+
+SPEECHMATICS_URL = "wss://eu2.rt.speechmatics.com/v2"
+
+GET_PRODUCT_TOOL = {
+    "name": "get_product_info",
+    "description": (
+        "Search the product catalog by product name, category, or feature keyword. "
+        "Returns full details for matching products."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Product name, category name, or feature keyword to search for",
+            }
+        },
+        "required": ["query"],
+    },
+}
+
+
+# ---------- Pydantic models ----------
 
 class Product(BaseModel):
-    sku: str
+    id: str
     name: str
     price: float
-    unit: str
     category: str
+    description: str
+    features: list[str]
+    availability: str
 
-class TranscriptRequest(BaseModel):
+
+class ChatRequest(BaseModel):
     transcript: str
-    products: list[Product] = []
+    products: list[Product]
+    anthropic_key: str
 
-class MeetingOutputRequest(BaseModel):
-    meeting_output: str
 
-class SpeakRequest(BaseModel):
-    text: str
-    voice: str = "sarah"
+# ---------- WebSocket transcription proxy ----------
 
-# --- Health ---
+@app.websocket("/ws/transcribe")
+async def transcribe_ws(websocket: WebSocket, speechmatics_key: str):
+    await websocket.accept()
+
+    try:
+        async with websockets.connect(
+            SPEECHMATICS_URL,
+            additional_headers={"Authorization": f"Bearer {speechmatics_key}"},
+        ) as sm_ws:
+            await sm_ws.send(
+                json.dumps({
+                    "message": "StartRecognition",
+                    "audio_format": {"type": "file"},
+                    "transcription_config": {
+                        "language": "en",
+                        "enable_partials": False,
+                        "max_delay": 2,
+                    },
+                })
+            )
+
+            async def forward_audio():
+                try:
+                    while True:
+                        data = await websocket.receive_bytes()
+                        await sm_ws.send(data)
+                except Exception:
+                    try:
+                        await sm_ws.send(
+                            json.dumps({"message": "EndOfStream", "last_seq_no": 0})
+                        )
+                    except Exception:
+                        pass
+
+            async def forward_transcripts():
+                async for msg in sm_ws:
+                    data = json.loads(msg)
+                    if data.get("message") == "AddTranscript":
+                        text = data.get("metadata", {}).get("transcript", "")
+                        if text:
+                            await websocket.send_json({"type": "transcript", "text": text})
+                    elif data.get("message") == "EndOfTranscript":
+                        await websocket.send_json({"type": "done"})
+                        break
+
+            await asyncio.gather(forward_audio(), forward_transcripts())
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+
+
+# ---------- Agent loop ----------
+
+def search_products(query: str, products: list[Product]) -> str:
+    q = query.lower()
+    matches = [
+        p for p in products
+        if (
+            q in p.name.lower()
+            or q in p.category.lower()
+            or q in p.description.lower()
+            or any(q in f.lower() for f in p.features)
+        )
+    ]
+    if not matches:
+        categories = ", ".join(sorted({p.category for p in products}))
+        return f"No products found for '{query}'. Available categories: {categories}."
+
+    parts = []
+    for p in matches[:4]:
+        parts.append(
+            f"Product: {p.name} (ID: {p.id})\n"
+            f"Price: ${p.price:.2f}\n"
+            f"Category: {p.category}\n"
+            f"Description: {p.description}\n"
+            f"Features: {', '.join(p.features)}\n"
+            f"Availability: {p.availability}"
+        )
+    return "\n\n---\n\n".join(parts)
+
+
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    client = anthropic.Anthropic(api_key=request.anthropic_key)
+    messages: list[dict] = [{"role": "user", "content": request.transcript}]
+    source: str | None = None
+
+    for _ in range(6):  # max agent iterations
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            system=SYSTEM_PROMPT,
+            tools=[GET_PRODUCT_TOOL],
+            messages=messages,
+        )
+
+        if response.stop_reason == "end_turn":
+            answer = next(
+                (b.text for b in response.content if hasattr(b, "text")), ""
+            )
+            # Extract "Source: X" line if present
+            for line in answer.splitlines():
+                if line.lower().startswith("source:"):
+                    source = line.split(":", 1)[1].strip()
+                    break
+            return {"answer": answer, "source": source}
+
+        if response.stop_reason == "tool_use":
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use" and block.name == "get_product_info":
+                    result = search_products(block.input["query"], request.products)
+                    # Track which product names appeared so we can surface a source
+                    for p in request.products:
+                        if p.name.lower() in result.lower() and source is None:
+                            source = p.name
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            break
+
+    return {"answer": "I couldn't find a good answer. Please try again.", "source": None}
+
+
+# ---------- Static files ----------
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+async def index():
+    return FileResponse("static/index.html")
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-# --- WebSocket: Transcription proxy ---
-
-@app.websocket("/ws/transcribe")
-async def ws_transcribe(browser_ws: WebSocket):
-    await browser_ws.accept()
-
-    if not SPEECHMATICS_API_KEY:
-        await browser_ws.send_text(json.dumps({"type": "error", "text": "Transcription service unavailable."}))
-        await browser_ws.close()
-        return
-
-    sm_url = f"{SPEECHMATICS_RT_URL}?jwt={SPEECHMATICS_API_KEY}"
-    sm_headers = {"Authorization": f"Bearer {SPEECHMATICS_API_KEY}"}
-
-    try:
-        async with ws_connect(sm_url, additional_headers=sm_headers) as sm_ws:
-            # Send StartRecognition message to Speechmatics
-            start_msg = {
-                "message": "StartRecognition",
-                "audio_format": {
-                    "type": "file",
-                },
-                "transcription_config": {
-                    "language": SPEECHMATICS_LANGUAGE,
-                    "enable_partials": False,
-                    "max_delay": 2,
-                },
-            }
-            await sm_ws.send(json.dumps(start_msg))
-
-            async def browser_to_sm():
-                """Forward binary audio from browser → Speechmatics."""
-                try:
-                    while True:
-                        data = await browser_ws.receive_bytes()
-                        await sm_ws.send(data)
-                except (WebSocketDisconnect, Exception):
-                    # Send EndOfStream to Speechmatics
-                    try:
-                        await sm_ws.send(json.dumps({"message": "EndOfStream", "last_seq_no": 0}))
-                    except Exception:
-                        pass
-
-            async def sm_to_browser():
-                """Forward Speechmatics transcript events → browser."""
-                try:
-                    async for raw_msg in sm_ws:
-                        if isinstance(raw_msg, bytes):
-                            continue
-                        msg = json.loads(raw_msg)
-                        msg_type = msg.get("message", "")
-
-                        if msg_type == "AddTranscript":
-                            text = msg.get("metadata", {}).get("transcript", "")
-                            if text.strip():
-                                await browser_ws.send_text(
-                                    json.dumps({"type": "transcript", "text": text})
-                                )
-                        elif msg_type == "EndOfTranscript":
-                            await browser_ws.send_text(json.dumps({"type": "done"}))
-                            break
-                        elif msg_type == "Error":
-                            err = msg.get("reason", "Transcription error")
-                            await browser_ws.send_text(
-                                json.dumps({"type": "error", "text": f"Transcription service error: {err}"})
-                            )
-                            break
-                except Exception:
-                    pass
-
-            await asyncio.gather(browser_to_sm(), sm_to_browser())
-
-    except (InvalidStatus, OSError, websockets.WebSocketException) as exc:
-        await browser_ws.send_text(
-            json.dumps({"type": "error", "text": "Transcription service unavailable."})
-        )
-    except Exception as exc:
-        try:
-            await browser_ws.send_text(
-                json.dumps({"type": "error", "text": "Connection lost. Please stop and retry."})
-            )
-        except Exception:
-            pass
-    finally:
-        try:
-            await browser_ws.close()
-        except Exception:
-            pass
-
-
-# --- POST /api/analyze ---
-
-ANALYZE_SYSTEM_PROMPT = """You are a sales meeting analyst for a candy distribution company.
-You have access to the company's product database (provided below as JSON).
-
-Given a spoken transcript of a salesperson describing their meeting, produce a structured markdown document with exactly these three sections in this order:
-
-## Order Overview
-Extract all products, quantities, and pricing discussed. Match product names to the database by name or SKU (case-insensitive).
-Calculate line totals (price × quantity) and a Total Deal Value.
-If a quantity is not mentioned for a product, write "not specified" in the Qty column and leave Line Total blank.
-Format as a markdown table with columns: SKU | Product | Qty | Unit Price | Line Total
-After the table, add a bold line: **Total Deal Value: X SEK** (only include products with specified quantities in the total).
-If a product is mentioned but not in the database, include it in the table with SKU = "UNKNOWN".
-If no products are mentioned at all, write "No products discussed."
-
-## Meeting Summary
-A concise narrative summary of the meeting: who was met, what was discussed, outcomes agreed, tone of the conversation.
-
-## Red Flags & Notes
-Use bullet points with ⚠️ prefix. Flag these issues if present:
-- Any product mentioned in the transcript that does not appear in the product database (by name or SKU)
-- Any customer objection, hesitation, price resistance, or mention of competitors
-- No follow-up date or next step was agreed upon during the meeting
-If none of the above are detected, write: "No red flags identified."
-
-Product Database (JSON):
-{product_json}
-
-Be concise and professional. If information is missing, note it as "Not mentioned."
-"""
-
-@app.post("/api/analyze")
-async def analyze(req: TranscriptRequest):
-    if not req.transcript or not req.transcript.strip():
-        raise HTTPException(status_code=422, detail="Transcript cannot be empty")
-
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="Analysis service unavailable")
-
-    product_json = json.dumps(
-        [p.model_dump() for p in req.products],
-        ensure_ascii=False,
-        indent=2,
-    ) if req.products else "[]"
-
-    system_prompt = ANALYZE_SYSTEM_PROMPT.replace("{product_json}", product_json)
-
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2048,
-            system=system_prompt,
-            messages=[{"role": "user", "content": req.transcript}],
-        )
-        markdown = message.content[0].text
-        return {"markdown": markdown}
-    except anthropic.APIError as exc:
-        raise HTTPException(status_code=502, detail="Analysis failed — please try again.")
-
-
-# --- POST /api/speak ---
-
-SPEECHMATICS_TTS_URL = "https://preview.tts.speechmatics.com/generate"
-
-@app.post("/api/speak")
-async def speak(req: SpeakRequest):
-    if not req.text.strip():
-        raise HTTPException(status_code=422, detail="Text cannot be empty")
-
-    if not SPEECHMATICS_API_KEY:
-        raise HTTPException(status_code=503, detail="TTS service unavailable")
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{SPEECHMATICS_TTS_URL}/{req.voice}",
-                headers={
-                    "Authorization": f"Bearer {SPEECHMATICS_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={"text": req.text},
-            )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="TTS service error")
-
-        return Response(content=resp.content, media_type="audio/wav")
-
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="TTS service timed out")
-    except httpx.RequestError:
-        raise HTTPException(status_code=502, detail="TTS service unreachable")
-
-
-# --- POST /api/coach ---
-
-COACH_SYSTEM_PROMPT = """You are an expert sales coach. Given a structured meeting output, generate exactly 3-5 targeted coaching questions to help the salesperson improve their skills. Focus on gaps, missed opportunities, or areas where they could improve. Return ONLY a JSON array of question strings, no other text.
-"""
-
-@app.post("/api/coach")
-async def coach(req: MeetingOutputRequest):
-    if not req.meeting_output or not req.meeting_output.strip():
-        raise HTTPException(status_code=422, detail="Meeting output cannot be empty")
-
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="Coaching service unavailable")
-
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            system=COACH_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": req.meeting_output}],
-        )
-        raw = message.content[0].text.strip()
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1] if "\n" in raw else raw
-            raw = raw.rsplit("```", 1)[0].strip()
-        questions = json.loads(raw)
-        if not isinstance(questions, list):
-            questions = [questions]
-        return {"questions": questions}
-    except (json.JSONDecodeError, IndexError):
-        raise HTTPException(status_code=502, detail="Coaching unavailable — please try again.")
-    except anthropic.APIError:
-        raise HTTPException(status_code=502, detail="Coaching unavailable — please try again.")
-
-
-# --- Static files (must be last) ---
-app.mount("/", StaticFiles(directory="static", html=True), name="static")

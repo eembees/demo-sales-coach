@@ -3,124 +3,69 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sales Coach</title>
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <title>Product Scout</title>
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <!-- Header -->
+
   <header>
-    <h1>&#127897; Sales Coach</h1>
-    <button id="btn-start-over" class="btn btn-secondary" onclick="startOver()">Start Over</button>
+    <div class="logo">
+      <span class="logo-icon" aria-hidden="true">🛍️</span>
+      <span class="logo-text">Product Scout</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn-ghost btn-icon" onclick="clearChat()" title="Clear chat" aria-label="Clear chat">↺</button>
+      <button class="btn-ghost btn-icon" onclick="showSettings()" title="API keys" aria-label="API key settings">⚙</button>
+    </div>
   </header>
 
-  <!-- Tab bar -->
-  <nav class="tab-bar">
-    <button class="tab active" id="tab-btn-coach" onclick="switchTab('coach')">Sales Coach</button>
-    <button class="tab" id="tab-btn-products" onclick="switchTab('products')">Product Database</button>
+  <nav class="tab-bar" role="tablist">
+    <button class="tab active" role="tab" aria-selected="true"  onclick="switchTab('chat')">Chat</button>
+    <button class="tab"        role="tab" aria-selected="false" onclick="switchTab('products')">Products</button>
   </nav>
 
-  <!-- Error banner -->
-  <div id="error-banner" class="error-banner hidden" role="alert"></div>
+  <!-- ── Chat tab ── -->
+  <div id="tab-chat" role="tabpanel">
 
-  <!-- TAB: Sales Coach -->
-  <div id="tab-coach">
-
-    <!-- PHASE 1: Record -->
-    <section id="phase-record" class="phase">
-      <h2 class="phase-label">Phase 1 &mdash; Record</h2>
-
-      <div class="btn-row">
-        <button id="btn-record" class="btn btn-primary btn-large" onclick="startRecording()">
-          &#9679; Start Recording
-        </button>
-        <button id="btn-stop" class="btn btn-danger btn-large hidden" onclick="stopRecording()">
-          &#9632; Stop &amp; Analyze
-        </button>
-      </div>
-
-      <div class="transcript-wrapper">
-        <label for="transcript-area">Transcript:</label>
-        <div id="transcript-area" class="transcript-box" aria-live="polite" aria-label="Live transcript" data-placeholder="I just talked to Michael from Big Food Corporation. He wants to buy 400,000 chocolate bars and he wants to follow up in one week from today"></div>
-      </div>
-
-      <div id="analyzing-spinner" class="spinner-row hidden">
-        <div class="spinner"></div>
-        <span>Analyzing&hellip;</span>
-      </div>
-    </section>
-
-    <!-- PHASE 2: Meeting Output -->
-    <section id="phase-output" class="phase hidden">
-      <h2 class="phase-label">Phase 2 &mdash; Meeting Output</h2>
-
-      <div id="meeting-output" class="output-box"></div>
-
-      <div class="btn-row">
-        <button id="btn-start-coaching" class="btn btn-primary btn-large" onclick="startCoaching()">
-          &#9654; Start Coaching
-        </button>
-      </div>
-
-      <div id="coaching-spinner" class="spinner-row hidden">
-        <div class="spinner"></div>
-        <span>Loading coaching questions&hellip;</span>
-      </div>
-    </section>
-
-    <!-- PHASE 3: Coaching -->
-    <section id="phase-coaching" class="phase hidden">
-      <h2 class="phase-label">Phase 3 &mdash; Coaching</h2>
-
-      <div id="question-counter" class="question-counter"></div>
-
-      <div id="question-box" class="question-box" aria-live="polite"></div>
-
-      <div class="btn-row coaching-btns">
-        <button id="btn-replay" class="btn btn-secondary btn-large" onclick="replayQuestion()">
-          &#128266; Replay
-        </button>
-        <button id="btn-next" class="btn btn-primary btn-large" onclick="nextQuestion()">
-          Next Question &#8594;
-        </button>
-      </div>
-
-      <div id="session-done" class="session-done hidden">
-        Great session! Tap <strong>Start Over</strong> for another.
-      </div>
-    </section>
-
-  </div><!-- /tab-coach -->
-
-  <!-- TAB: Product Database -->
-  <div id="tab-products" class="hidden">
-    <div class="products-panel">
-      <h2 class="phase-label">Product Database</h2>
-      <p class="products-hint">Edit products inline. Changes apply immediately to the next analysis.</p>
-
-      <div class="table-scroll">
-        <table class="products-table" id="products-table">
-          <thead>
-            <tr>
-              <th>SKU</th>
-              <th>Name</th>
-              <th>Price</th>
-              <th>Unit</th>
-              <th>Category</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="products-body"></tbody>
-        </table>
-      </div>
-
-      <div class="products-actions">
-        <button class="btn btn-primary" onclick="addProduct()">+ Add Product</button>
-        <button class="btn btn-secondary" onclick="resetProducts()">Reset to Defaults</button>
+    <div id="chat-messages" aria-live="polite" aria-label="Conversation">
+      <div class="message bot-message">
+        <div class="bubble">
+          Hi! I'm your product assistant. Ask me anything about our products — just tap the mic and speak.
+        </div>
       </div>
     </div>
-  </div><!-- /tab-products -->
 
-  <script src="app.js"></script>
+    <div id="voice-bar">
+      <div id="transcript-preview" class="transcript-preview hidden" aria-live="polite"></div>
+
+      <button
+        id="mic-btn"
+        class="mic-btn"
+        onclick="toggleRecording()"
+        aria-label="Start recording"
+      >
+        <span id="mic-icon" aria-hidden="true">🎤</span>
+      </button>
+
+      <p id="recording-hint" class="recording-hint">Tap to speak</p>
+    </div>
+
+  </div>
+
+  <!-- ── Products tab ── -->
+  <div id="tab-products" class="hidden" role="tabpanel">
+    <div class="tab-content">
+      <div class="section-header">
+        <h2>Product Database</h2>
+        <div class="section-actions">
+          <button class="btn-secondary btn-sm" onclick="addProduct()">+ Add</button>
+          <button class="btn-ghost btn-sm"      onclick="resetProducts()">Reset</button>
+        </div>
+      </div>
+      <div id="product-table-wrap"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>
