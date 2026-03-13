@@ -30,8 +30,8 @@ SPEECHMATICS_URL = "wss://eu2.rt.speechmatics.com/v2"
 GET_PRODUCT_TOOL = {
     "name": "get_product_info",
     "description": (
-        "Search the product catalog by product name, category, or feature keyword. "
-        "Returns full details for matching products."
+        "Fetch the product catalog in full with  product name, category, and feature keyword. "
+        "Returns full details for all products."
     ),
     "input_schema": {
         "type": "object",
@@ -124,6 +124,16 @@ async def transcribe_ws(websocket: WebSocket, speechmatics_key: str):
 
 # ---------- Agent loop ----------
 
+def get_products(query: str, products:list[Product])->str:
+    return "\n\n---\n\n".join(
+            f"Product: {p.name} (ID: {p.id})\n"
+            f"Price: ${p.price:.2f}\n"
+            f"Category: {p.category}\n"
+            f"Description: {p.description}\n"
+            f"Features: {', '.join(p.features)}\n"
+            f"Availability: {p.availability}" for p in products
+    )
+
 def search_products(query: str, products: list[Product]) -> str:
     q = query.lower()
     matches = [
@@ -166,7 +176,7 @@ async def chat(request: ChatRequest):
             tools=[GET_PRODUCT_TOOL],
             messages=messages,
         )
-
+        print(f"LLM response: {response.content}")
         if response.stop_reason == "end_turn":
             answer = next(
                 (b.text for b in response.content if hasattr(b, "text")), ""
@@ -182,7 +192,8 @@ async def chat(request: ChatRequest):
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use" and block.name == "get_product_info":
-                    result = search_products(block.input["query"], request.products)
+                    result = get_products(block.input["query"], request.products)
+                    # result = search_products(block.input["query"], request.products)
                     # Track which product names appeared so we can surface a source
                     for p in request.products:
                         if p.name.lower() in result.lower() and source is None:
