@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Scout</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <span class="logo-icon" aria-hidden="true">🛍️</span>
+      <span class="logo-text">Product Scout</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn-ghost btn-icon" onclick="clearChat()" title="Clear chat" aria-label="Clear chat">↺</button>
+      <button class="btn-ghost btn-icon" onclick="showSettings()" title="API keys" aria-label="API key settings">⚙</button>
+    </div>
+  </header>
+
+  <nav class="tab-bar" role="tablist">
+    <button class="tab active" role="tab" aria-selected="true"  onclick="switchTab('chat')">Chat</button>
+    <button class="tab"        role="tab" aria-selected="false" onclick="switchTab('products')">Products</button>
+  </nav>
+
+  <!-- ── Chat tab ── -->
+  <div id="tab-chat" role="tabpanel">
+
+    <div id="chat-messages" aria-live="polite" aria-label="Conversation">
+      <div class="message bot-message">
+        <div class="bubble">
+          Hi! I'm your product assistant. Ask me anything about our products — just tap the mic and speak.
+        </div>
+      </div>
+    </div>
+
+    <div id="voice-bar">
+      <div id="transcript-preview" class="transcript-preview hidden" aria-live="polite"></div>
+
+      <button
+        id="mic-btn"
+        class="mic-btn"
+        onclick="toggleRecording()"
+        aria-label="Start recording"
+      >
+        <span id="mic-icon" aria-hidden="true">🎤</span>
+      </button>
+
+      <p id="recording-hint" class="recording-hint">Tap to speak</p>
+    </div>
+
+  </div>
+
+  <!-- ── Products tab ── -->
+  <div id="tab-products" class="hidden" role="tabpanel">
+    <div class="tab-content">
+      <div class="section-header">
+        <h2>Product Database</h2>
+        <div class="section-actions">
+          <button class="btn-secondary btn-sm" onclick="addProduct()">+ Add</button>
+          <button class="btn-ghost btn-sm"      onclick="resetProducts()">Reset</button>
+        </div>
+      </div>
+      <div id="product-table-wrap"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
