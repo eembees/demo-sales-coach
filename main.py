@@ -27,8 +27,8 @@ If the requested product is not in the database, say so clearly.\
 """
 
 SPEECHMATICS_RT_URL = "wss://eu2.rt.speechmatics.com/v2"
-SPEECHMATICS_TTS_URL = "https://eu2.tts.speechmatics.com/v1/generate"
 SPEECHMATICS_TTS_VOICE = "aria"
+SPEECHMATICS_TTS_URL = f"https://preview.tts.speechmatics.com/generate/{SPEECHMATICS_TTS_VOICE}"
 
 GET_PRODUCT_TOOL = {
     "name": "get_product_info",
@@ -232,11 +232,7 @@ async def tts(request: TTSRequest):
                     "Authorization": f"Bearer {request.speechmatics_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "input": request.text,
-                    "voice": {"name": SPEECHMATICS_TTS_VOICE},
-                    "audio_format": {"type": "wav"},
-                },
+                json={"text": request.text},
             ) as resp:
                 resp.raise_for_status()
                 async for chunk in resp.aiter_bytes(chunk_size=4096):
