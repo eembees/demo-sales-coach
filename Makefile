@@ -9,4 +9,4 @@ run:
 	uv run uvicorn main:app --reload --port $(PORT)
 
 screenshots:
-	uv run python scripts/screenshot.py --url http://localhost:$(PORT) --out ../screenshots
+	uv run python scripts/screenshot.py --url http://localhost:$(PORT) --out screenshots

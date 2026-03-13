@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Take Playwright screenshots of the Product Scout UI at multiple states and
-viewports. Saves PNGs into ../../screenshots/ (repo root / screenshots/).
+viewports. Saves PNGs into ../screenshots/ (repo root / screenshots/).
 
 Usage:
     python scripts/screenshot.py [--url URL] [--out DIR]
 
 Defaults:
     --url  http://localhost:8000
-    --out  ../../screenshots
+    --out  ../screenshots
 """
 
 import argparse
@@ -17,7 +17,7 @@ from pathlib import Path
 
 # Resolve default output dir relative to this script's location
 SCRIPT_DIR = Path(__file__).parent
-DEFAULT_OUT = (SCRIPT_DIR / "../../screenshots").resolve()
+DEFAULT_OUT = (SCRIPT_DIR / "../screenshots").resolve()
 
 CHROMIUM_CANDIDATES = [
     "/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome",
